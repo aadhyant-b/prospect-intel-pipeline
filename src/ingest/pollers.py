@@ -33,11 +33,32 @@ logger = logging.getLogger(__name__)
 #   ACCESS Newswire is behind a Cloudflare bot challenge (403 on every
 #   path); EIN Presswire's RSS is per-newsroom-ID only, no general feed
 #   found; PRWeb 404s on every path tried.
+#
+# Funding-density investigation (2026-08-01): the general feeds above are
+# dominated by micro-cap/mining/public-company noise, not venture funding.
+# PR Newswire exposes a real category taxonomy (discovered via their /rss/
+# index page) — "financial-services-latest-news/venture-capital-list.rss"
+# tested at ~50% genuine VC-round density (Series A-D, real $ amounts),
+# added below. GlobeNewswire has no equivalent "Venture Capital" subject
+# code, only "fin" = Financing Agreements
+# (/RssFeed/subject/fin/feedTitle/...) — tested twice, ~5% density (1
+# genuine hit in 20, rest micro-cap private placements and debt/credit
+# facilities, plus duplicate multi-language entries of the same story).
+# Same noise profile as PR Newswire's private-placement-list; skipped for
+# the same reason. Neither wire's feeds support pagination (?page=,
+# ?startDate=, etc. are silently ignored) — for real historical backfill,
+# see the sitemap-walking investigation instead (not yet built).
 FEEDS: dict[str, str] = {
     # General "all news releases" feed — confirmed stable public endpoint.
+    # Kept for the switch detector's broader coverage despite low funding
+    # density.
     "PR Newswire": "https://www.prnewswire.com/rss/news-releases-list.rss",
     # GlobeNewswire's general newsroom feed (org class 1 = all organizations).
+    # Kept for the same reason.
     "GlobeNewswire": "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20Room",
+    # High-density funding category feed — ~50% genuine VC rounds per
+    # testing above.
+    "PR Newswire - Venture Capital": "https://www.prnewswire.com/rss/financial-services-latest-news/venture-capital-list.rss",
 }
 
 USER_AGENT = "press-release-intel-bot/0.1 (+https://github.com/aadhyant-b/prospect-intel-pipeline)"
