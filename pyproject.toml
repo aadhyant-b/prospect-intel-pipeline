@@ -12,6 +12,7 @@ dependencies = [
     "rapidfuzz",
     "python-dotenv",
     "anthropic",
+    "pydantic",
 ]
 
 [project.optional-dependencies]
