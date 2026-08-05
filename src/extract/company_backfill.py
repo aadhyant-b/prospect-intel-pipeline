@@ -97,6 +97,7 @@ def run(source: str | None, limit: int) -> None:
     total_cost = 0.0
     filled = 0
     junk_skipped = 0
+    api_errors = 0
 
     for row in rows:
         title = (row["title"] or "").strip()
@@ -107,17 +108,28 @@ def run(source: str | None, limit: int) -> None:
             print(f"[skip-junk] {title!r}")
             continue
 
-        company_name, cost = extract_company_name(anthropic_client, title)
+        try:
+            company_name, cost = extract_company_name(anthropic_client, title)
+        except anthropic.APIError as exc:
+            # A single malformed/unusual title (encoding artifacts are common
+            # in decades-old Wayback-derived titles) shouldn't kill a
+            # thousand-row batch. Leave company_name_raw NULL -- not '' --
+            # so this row is retried on the next run rather than being
+            # wrongly marked "confirmed no company".
+            api_errors += 1
+            print(f"[api-error] {title[:70]!r} -> {exc}")
+            continue
+
         total_cost += cost
         db.table("releases").update({"company_name_raw": company_name or ""}).eq("id", row["id"]).execute()
         if company_name:
             filled += 1
         print(f"[${cost:.6f}] {title[:70]!r} -> {company_name!r}")
 
-    no_company = len(rows) - filled - junk_skipped
+    no_company = len(rows) - filled - junk_skipped - api_errors
     print(
         f"\nProcessed {len(rows)} rows: filled={filled} confirmed_no_company={no_company} "
-        f"junk_skipped={junk_skipped}. Estimated cost: ${total_cost:.4f}"
+        f"junk_skipped={junk_skipped} api_errors={api_errors}. Estimated cost: ${total_cost:.4f}"
     )
 
 

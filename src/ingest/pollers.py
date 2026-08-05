@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from src.db import get_client
+from src.ingest.company_name_heuristic import guess_company_name
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ class Release(BaseModel):
     distributor: str
     published_at: datetime
     raw_text: str
+    company_name_raw: str | None = None
 
 
 def _entry_to_release(entry: feedparser.FeedParserDict, distributor: str) -> Release | None:
@@ -95,6 +97,13 @@ def _entry_to_release(entry: feedparser.FeedParserDict, distributor: str) -> Rel
             distributor=distributor,
             published_at=published_at,
             raw_text=raw_text,
+            # Same cheap, ungated heuristic src/ingest/historical.py uses --
+            # gives the switch detector a consistent grouping signal on every
+            # release regardless of whether extraction has ever run (extraction
+            # only fills company_name when is_funding_related=true, so it can't
+            # be the general-purpose grouping key extraction.py's own extractor
+            # produces; see src/detect/detector.py for how this is consumed).
+            company_name_raw=guess_company_name(title) if title else None,
         )
     except ValidationError as exc:
         logger.warning(
