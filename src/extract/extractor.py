@@ -17,7 +17,8 @@ from typing import Literal
 
 import anthropic
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from rapidfuzz import fuzz
 
 from src.db import get_client
 
@@ -70,6 +71,123 @@ class ExtractionResult(BaseModel):
     sector: str | None
 
 
+class GroundedExtractionResult(ExtractionResult):
+    """ExtractionResult plus the grounding-check outcome. Never passed as
+    `output_format` to the model -- Claude doesn't fill grounding_failures,
+    ground_extraction() computes it afterward from the model's own output."""
+
+    grounding_failures: list[str] = Field(default_factory=list)
+
+
+# --- Grounding (Stage 1): verify every field is traceable to the source
+# text before trusting it. A field that isn't found gets nulled (investors:
+# dropped from the list) rather than silently passed through -- this is what
+# lets src/eval/evaluator.py's cost model treat a hallucination as strictly
+# worse than an honest null (grounding is what produces the honest null).
+GROUNDING_FUZZY_THRESHOLD = 90.0
+
+_AMOUNT_MULTIPLIERS = {
+    "k": 1_000, "thousand": 1_000,
+    "m": 1_000_000, "mm": 1_000_000, "million": 1_000_000,
+    "b": 1_000_000_000, "bn": 1_000_000_000, "billion": 1_000_000_000,
+}
+_DOLLAR_RE = re.compile(
+    r"(?:USD|US\$|\$)\s*([\d,]+(?:\.\d+)?)\s*(thousand|million|billion|k|mm?|bn|b)?\b",
+    re.IGNORECASE,
+)
+
+# Funding-round keyword expected in the source text for each enum value.
+# "other" is a catch-all with no fixed keyword, so it's exempt by design --
+# there's nothing meaningful to check it against.
+_FUNDING_ROUND_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "pre-seed": ("pre-seed", "pre seed"),
+    "seed": ("seed",),
+    "series-a": ("series a",),
+    "series-b": ("series b",),
+    "series-c": ("series c",),
+    "series-d-plus": ("series d", "series e", "series f", "series g", "series h"),
+    "debt": ("debt", "loan", "credit facility", "term note", "notes"),
+    "grant": ("grant",),
+    "ipo": ("ipo", "initial public offering"),
+    "other": (),
+}
+
+
+def _fuzzy_contains(needle: str, haystack: str, threshold: float = GROUNDING_FUZZY_THRESHOLD) -> bool:
+    return fuzz.partial_ratio(needle.lower(), haystack.lower()) >= threshold
+
+
+def _dollar_amounts_in_text(text: str) -> list[float]:
+    amounts = []
+    for match in _DOLLAR_RE.finditer(text):
+        number_str, suffix = match.group(1), match.group(2)
+        try:
+            number = float(number_str.replace(",", ""))
+        except ValueError:
+            continue
+        if suffix:
+            number *= _AMOUNT_MULTIPLIERS.get(suffix.lower(), 1)
+        amounts.append(number)
+    return amounts
+
+
+def _amount_grounded(amount_usd: float, text: str) -> bool:
+    # 1% relative tolerance (floor $1) absorbs rounding between the model's
+    # numeric value and the text's written form ("$12 million" -> 12e6 exactly,
+    # but "$12.3 million" vs a source that rounds to "$12M" shouldn't fail).
+    found = _dollar_amounts_in_text(text)
+    return any(abs(amount_usd - f) <= max(1.0, 0.01 * max(abs(amount_usd), abs(f))) for f in found)
+
+
+def _funding_round_grounded(funding_round: str, text: str) -> bool:
+    keywords = _FUNDING_ROUND_KEYWORDS.get(funding_round, ())
+    if not keywords:
+        return True
+    lowered = text.lower()
+    return any(kw in lowered for kw in keywords)
+
+
+def ground_extraction(result: ExtractionResult, text: str) -> GroundedExtractionResult:
+    """Verify every field on `result` is traceable to `text` (the exact
+    title+body shown to the model). Ungrounded scalar fields are nulled;
+    ungrounded investors are dropped from the list. is_funding_related is a
+    judgment call, not a span, so it's exempt from grounding entirely.
+    """
+    failures: list[str] = []
+
+    company_name = result.company_name
+    if company_name is not None and not _fuzzy_contains(company_name, text):
+        failures.append(f"company_name: {company_name!r} not found in source text")
+        company_name = None
+
+    amount_usd = result.amount_usd
+    if amount_usd is not None and not _amount_grounded(amount_usd, text):
+        failures.append(f"amount_usd: {amount_usd} has no matching dollar figure in source text")
+        amount_usd = None
+
+    investors = []
+    for investor in result.investors:
+        if _fuzzy_contains(investor, text):
+            investors.append(investor)
+        else:
+            failures.append(f"investors: {investor!r} not found in source text")
+
+    funding_round = result.funding_round
+    if funding_round is not None and not _funding_round_grounded(funding_round, text):
+        failures.append(f"funding_round: {funding_round!r} keyword not found in source text")
+        funding_round = None
+
+    return GroundedExtractionResult(
+        is_funding_related=result.is_funding_related,
+        company_name=company_name,
+        funding_round=funding_round,
+        amount_usd=amount_usd,
+        investors=investors,
+        sector=result.sector,
+        grounding_failures=failures,
+    )
+
+
 def _strip_html(text: str) -> str:
     text = re.sub(r"<[^>]+>", " ", text or "")
     return re.sub(r"\s+", " ", text).strip()
@@ -86,7 +204,7 @@ def extract_release(
     title: str,
     raw_text: str,
     model: str = DEFAULT_MODEL,
-) -> tuple[ExtractionResult, float]:
+) -> tuple[GroundedExtractionResult, float]:
     body = _strip_html(raw_text)[:MAX_BODY_CHARS]
     response = client.messages.parse(
         model=model,
@@ -104,7 +222,8 @@ def extract_release(
     else:
         result = response.parsed_output
 
-    return result, _estimate_cost(response.usage, model)
+    grounded = ground_extraction(result, f"{title}\n{body}")
+    return grounded, _estimate_cost(response.usage, model)
 
 
 def _fetch_releases(limit: int, distributor: str | None) -> list[dict]:

@@ -1,11 +1,33 @@
 # press-release-intel — project roadmap
 
-Press-release prospect intelligence pipeline. Ingests PR Newswire and GlobeNewswire wire feeds, extracts funding events, detects distributor/PR-agency "switches" (a signal a company may be shopping for new representation), resolves company identity, and scores prospects.
+Press-release prospect intelligence pipeline. Ingests PR Newswire and GlobeNewswire wire feeds, extracts funding events, resolves company identity, and scores prospects.
 
 This file is the durable plan of record for the roadmap below. Update it when a workstream's status changes — don't let it drift from what's actually built.
 
 ## Status legend
 `todo` · `in progress` · `done` · `deferred`
+
+---
+
+## Product pivot (2026-08-05): funding-intelligence lead feed
+
+**Why:** the switch detector's own backtest (cutoff 2024-06-01, run against the full corrected dataset) came back precision=0.07, recall=1.00, F1=0.13, on only 46 companies with a knowable outcome out of 5,619 company groups — real public data is too sparse in confirmed wire-switches to validate a switch detector as the core product, at least on the sources ingested so far. (A live investigation the same day found that Wayback CDX actually has dense, unindexed 2023–2025 Business Wire coverage — 13,000+ distinct releases/month, confirmed via full pagination — that could change this later. Not pursued now; flagged here so it isn't lost.)
+
+**The pivot:** the product is now a **funding-intelligence lead feed** — structured extraction of funding announcements (who raised, how much, from whom, sector) from the VC feed and other wire sources, enriched with per-company activity profiles (cadence, momentum). The switch/gone-quiet signal from the old Track C detector is demoted to *one enrichment signal among several*, not the core product.
+
+**Technical differentiator:** an ML-engineering layer that makes the extraction trustworthy enough to sell as a lead feed rather than a raw model dump — grounding (catching hallucinated fields), cost-weighted evaluation (a wrong field costs more than a missing one), uncertainty routing (low-confidence extractions go to human review, not straight to the feed), and null-model ablation (proving the LLM extractor earns its cost over a cheap heuristic baseline).
+
+### 7-step roadmap
+
+1. **Extraction grounding** (`in progress`) — post-extraction span-verification layer in `src/extract/extractor.py`: every field must be traceable to the source text or it's nulled and logged. Catches hallucination before it reaches eval or the feed.
+2. **Cost-weighted evaluation** (`todo`, right after 1) — `src/eval/evaluator.py` gets a field-level error-cost model (company_name costliest, then amount_usd, investors, funding_round/sector) plus a false-claim penalty so a confidently wrong value scores worse than an honest null — rewarding Stage 1's grounding instead of fighting it.
+3. **Uncertainty routing** (`todo`, later) — low-confidence extractions (ties into A1's proposed `extraction_confidence` field) route to human review instead of the feed directly.
+4. **Null-model ablation** (`todo`, later) — benchmark the LLM extractor against a trivial baseline (regex/heuristic-only, or always-null) to prove it earns its cost rather than assuming it does.
+5. **Per-company activity profiles** (`todo`, later) — generalize the cadence/momentum math already built in `src/detect/detector.py` beyond switch-detection into a general enrichment signal for the feed (posting frequency, recency, volume trend).
+6. **Funding-feed product layer** (`not started` — next, pending review) — aggregate and rank extracted funding events into the actual lead feed; switch/gone-quiet becomes one input signal among several, not the headline.
+7. **Delivery layer** (`not started` — next, pending review) — surfacing the feed (dashboard, alerts, or export). No UI work or new schema migrations without review first.
+
+Steps 1–2 are the current work. Steps 6–7 and any new migrations are explicitly **not** started until reviewed.
 
 ---
 
@@ -35,14 +57,14 @@ The switch detector (Track C) needs historical (company, date, distributor) reco
 
 ---
 
-## Track C — Switch detector (2 live wires: PR Newswire, GlobeNewswire)
+## Track C — Switch detector (demoted: now one enrichment signal, not the core product)
 
-Detects when a company appears to have changed PR distributor/agency — the core "prospect" signal (a company shopping for new representation is a sales lead).
+Built and working (C1–C3 done, C4 documented below), but its own backtest showed public data is too sparse in confirmed wire-switches to validate it as a standalone product signal (see the pivot section above). It's kept as-is and will feed into roadmap step 5/6 (per-company activity profiles, funding-feed enrichment) as one signal among several — not pursued further as a headline feature for now.
 
-- **C1 — Distributor alias map** (`todo`): a config recording that wire brands can be renamed, acquired, or co-owned (e.g. ACCESS owns Newswire — documented as the motivating example; no employer-specific data beyond public corporate-ownership facts). Normalization is applied *before* any switch logic runs, so a wire rebrand or ownership change never reads as a mass "switch" event across every company on that wire.
-- **C2 — Rules-based detector** (`todo`): per-company baseline publishing cadence; "gone quiet" and "cadence drop" signals with recency decay and volume weighting (a company that posts weekly going silent for a month is a stronger signal than one that posts quarterly).
-- **C3 — Predictions log + outcome tracking** (`todo`): a table logging every switch prediction plus its eventual outcome, so precision/recall become measurable over time and detection thresholds are tunable against real feedback rather than guessed once and left alone.
-- **C4 — Documented upgrade trigger** (`todo`): once mined (Track B) + observed (C3) switches reach a sufficient labeled-example count, train a learned model and benchmark it against the tuned rules baseline before replacing it. The trigger condition (count threshold, benchmark bar) should be written down when C1–C3 land, not decided ad hoc later.
+- **C1 — Distributor alias map** (`done`, `src/detect/wire_aliases.py`): normalizes wire brand aliases (e.g. our own "PR Newswire" / "PR Newswire - Venture Capital" feeds) before any switch logic runs.
+- **C2 — Rules-based detector** (`done`, `src/detect/detector.py`): per-company baseline publishing cadence; "gone quiet" and "cadence drop" signals with recency decay and volume weighting.
+- **C3 — Predictions log + outcome tracking** (`done` — table + backtest harness; not actively fed): `migrations/007_switch_predictions.sql`, `src/detect/backtest.py`. Backtested at cutoff 2024-06-01: precision=0.07, recall=1.00, F1=0.13 on 46 companies with a knowable outcome.
+- **C4 — Documented upgrade trigger** (`deferred`): moot while C is demoted — revisit only if per-company activity profiles (roadmap step 5) surface switch-detection as valuable again, informed by the unindexed dense Business Wire data noted in the pivot section.
 
 ---
 
@@ -57,13 +79,16 @@ Company identity resolution — the same company must map to one row across diff
 
 ## Execution order (as of this roadmap)
 
-Explicitly sequenced by the user, not inferred: **B1 → A1 → (stop for review) → C → D**. B1 and A1 are done (findings/proposal above and in `docs/track-a1-schema-proposal.md`) and awaiting review. **Do not start Track C or D work, and do not implement A1's schema changes, until reviewed and explicitly greenlit.**
+Superseded by the 2026-08-05 pivot above. Current order: **7-step roadmap steps 1 → 2 (this work) → (stop for review) → 3–7**. **Do not start step 6 (funding-feed product layer), step 7 (delivery/UI), or any new schema migrations until reviewed and explicitly greenlit.**
+
+Track A/B/D below are still active and feed the pivot directly (A = the extraction this pivot depends on; D = entity resolution the feed needs; B is now optional/deferred since switch-mining isn't the priority). Track C is demoted per above but left intact.
 
 ## Existing implementation (context for the above)
 
-- `src/ingest/` — RSS pollers for PR Newswire and GlobeNewswire (`migrations/002_releases.sql`).
-- `src/extract/extractor.py` — Claude teacher extraction (Track A).
+- `src/ingest/` — RSS pollers for PR Newswire and GlobeNewswire (`migrations/002_releases.sql`), plus historical backfill (`historical.py`) and shared company-name heuristic (`company_name_heuristic.py`).
+- `src/extract/extractor.py` — Claude teacher extraction (Track A); `company_backfill.py` — Haiku-based title-only company-name backfill.
 - `src/eval/` — `label_gold.py` (hand-labeling CLI), `evaluator.py` (scoring harness).
-- `src/resolve/resolver.py` — placeholder for Track D.
+- `src/resolve/resolver.py` — `company_group_key`/`normalize_company_name` (Track D first pass, done).
+- `src/detect/` — switch detector (Track C, demoted — see above): `detector.py`, `wire_aliases.py`, `backtest.py`.
 - `src/score/scorer.py` — placeholder for prospect scoring (downstream of Tracks A–D).
-- `migrations/` — `companies`, `releases`, `extractions`, `funding_events`, `prospect_scores`. No switch-detection or switch-prediction tables yet (Track C, C3).
+- `migrations/` — `companies`, `releases`, `extractions`, `funding_events`, `prospect_scores`, `switch_predictions`.
