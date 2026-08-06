@@ -54,6 +54,21 @@ def test_leads_list_renders_rows(monkeypatch):
     assert "2d ago" in response.text
 
 
+def test_leads_list_headers_have_tooltips_and_deal_size_label(monkeypatch):
+    monkeypatch.setattr(main, "fetch_leads", lambda: [_fake_leads_list_row()])
+
+    client = TestClient(main.app)
+    response = client.get("/leads")
+
+    assert response.status_code == 200
+    # Renamed from the ambiguous "MOVE" label, plus its scale hint.
+    assert "DEAL SIZE" in response.text
+    assert "small &rarr; large" in response.text or "small → large" in response.text
+    # Every header should carry an explanatory native title attribute.
+    assert 'title="Disclosed raise amount in US dollars"' in response.text
+    assert "VERIFIED means every field was traceable" in response.text
+
+
 def test_leads_list_stat_bar_reflects_totals(monkeypatch):
     fake_leads = [
         _fake_leads_list_row(id="lead-1", amount_usd=10_000_000.0, fully_grounded=True),

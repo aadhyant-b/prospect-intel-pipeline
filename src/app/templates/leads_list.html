@@ -61,16 +61,19 @@
   <table class="leads" id="leads-table">
     <thead>
       <tr>
-        <th class="sortable" data-sort-key="date">TIME <span class="arrow">&#9660;</span></th>
-        <th>TICKER</th>
-        <th>COMPANY</th>
-        <th class="sortable" data-sort-key="round">ROUND <span class="arrow">&#9660;</span></th>
-        <th class="sortable" data-sort-key="amount">AMOUNT <span class="arrow">&#9660;</span></th>
-        <th>INV</th>
-        <th>SECTOR</th>
-        <th>MOVE</th>
-        <th>ACTIVITY</th>
-        <th>CONF</th>
+        <th class="sortable th-tip" data-sort-key="date" title="Time since this release was published (hover a row's TIME cell for the exact timestamp)"><span class="th-label">TIME</span> <span class="arrow">&#9660;</span></th>
+        <th class="th-tip" title="Auto-generated short code for the company (not a real stock ticker)"><span class="th-label">TICKER</span></th>
+        <th class="th-tip" title="Company name extracted and verified from the press release"><span class="th-label">COMPANY</span></th>
+        <th class="sortable th-tip" data-sort-key="round" title="Funding round type (Series A, seed, debt, etc.) as stated in the release"><span class="th-label">ROUND</span> <span class="arrow">&#9660;</span></th>
+        <th class="sortable th-tip" data-sort-key="amount" title="Disclosed raise amount in US dollars"><span class="th-label">AMOUNT</span> <span class="arrow">&#9660;</span></th>
+        <th class="th-tip" title="Number of investors disclosed in the release"><span class="th-label">INV</span></th>
+        <th class="th-tip" title="Company's industry or category, as stated or inferred from the release"><span class="th-label">SECTOR</span></th>
+        <th class="th-tip" title="Relative deal size -- longer/brighter bar = larger raise, scaled against today's leads">
+          <span class="th-label">DEAL SIZE</span>
+          <div class="th-sub">small &rarr; large</div>
+        </th>
+        <th class="th-tip" title="Publishing-activity signal for this company (release cadence / switch signals)"><span class="th-label">ACTIVITY</span></th>
+        <th class="th-tip" title="Extraction confidence -- VERIFIED means every field was traceable to the source text; UNVERIFIED means a field couldn't be grounded and was left blank"><span class="th-label">CONF</span></th>
       </tr>
     </thead>
     <tbody id="leads-tbody">

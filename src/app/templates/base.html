@@ -137,6 +137,17 @@
   table.leads th.sortable .arrow { opacity: 0; margin-left: 3px; }
   table.leads th.sortable.sort-active .arrow { opacity: 1; color: var(--amber); }
 
+  /* Header tooltips use the native title attribute (reliable regardless of
+     the table-scroll wrapper's overflow clipping) -- this just adds a
+     visual hint that hovering does something. */
+  table.leads th.th-tip:not(.sortable) { cursor: help; }
+  table.leads th.th-tip .th-label { border-bottom: 1px dotted var(--green-dim); }
+  table.leads th.th-tip:hover .th-label { border-bottom-color: var(--amber); }
+  table.leads th .th-sub {
+    font-size: 9px; font-weight: normal; letter-spacing: 0;
+    color: var(--green-dim); opacity: 0.7; margin-top: 2px; white-space: nowrap;
+  }
+
   .amount { color: #d8ffe4; font-weight: bold; }
   .round-tag {
     display: inline-block; padding: 1px 6px; font-size: 10px;
