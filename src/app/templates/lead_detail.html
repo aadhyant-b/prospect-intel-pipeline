@@ -3,12 +3,13 @@
 {% block content %}
 <a class="back-link" href="/leads">&lt; BACK TO FEED</a>
 <div class="panel">
-  <div class="panel-head">&gt; {{ (lead.company_name or 'UNKNOWN COMPANY')|upper }}</div>
+  <div class="panel-head">&gt; {{ (lead.company_name or 'UNKNOWN COMPANY')|upper }} <span class="ticker-code">[{{ lead.ticker }}]</span></div>
   <div class="field-row"><div class="label">FUNDING ROUND</div><div class="value"><span class="round-tag">{{ (lead.funding_round or 'N/A')|upper }}</span></div></div>
   <div class="field-row"><div class="label">AMOUNT</div><div class="value amount">{{ lead.amount_usd_fmt }}</div></div>
   <div class="field-row"><div class="label">SECTOR</div><div class="value">{{ lead.sector or '—' }}</div></div>
   <div class="field-row"><div class="label">INVESTORS</div><div class="value">{% if lead.investors %}{{ lead.investors|join(', ') }}{% else %}—{% endif %}</div></div>
-  <div class="field-row"><div class="label">PUBLISHED</div><div class="value">{{ lead.published_at or '—' }}</div></div>
+  <div class="field-row"><div class="label">PUBLISHED</div><div class="value">{{ lead.published_at or '—' }} <span class="time-ago">({{ lead.time_ago }})</span></div></div>
+  <div class="field-row"><div class="label">INVESTOR COUNT</div><div class="value">&times;{{ lead.investor_count }}</div></div>
   <div class="field-row"><div class="label">DISTRIBUTOR</div><div class="value">{{ lead.distributor or '—' }}</div></div>
   <div class="field-row">
     <div class="label">SOURCE RELEASE</div>
@@ -39,11 +40,18 @@
 
 {% if lead.switch_signal %}
 <div class="panel">
-  <div class="panel-head">&gt; &#9888; ACTIVITY SIGNAL (score {{ '%.2f'|format(lead.switch_signal.score) }})</div>
+  <div class="panel-head">&gt; <span class="badge badge-signal">&#9888; ACTIVITY SIGNAL</span> (score {{ '%.2f'|format(lead.switch_signal.score) }})</div>
   <div style="padding: 10px 14px;">
     {% for reason in lead.switch_signal.reasons %}
       <div>&bull; {{ reason }}</div>
     {% endfor %}
+  </div>
+</div>
+{% elif lead.activity and lead.activity.kind == 'cadence' %}
+<div class="panel">
+  <div class="panel-head">&gt; PUBLISHING CADENCE</div>
+  <div style="padding: 10px 14px; color: var(--green-dim);">
+    {{ lead.activity.text }} on file for this company &middot; {{ lead.activity.detail }}
   </div>
 </div>
 {% endif %}

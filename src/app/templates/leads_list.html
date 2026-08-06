@@ -1,46 +1,203 @@
 {% extends "base.html" %}
 {% block title %}LEADS — FUNDING WIRE TERMINAL{% endblock %}
+
+{% block ticker %}
+<div class="ticker-strip">
+  <div class="ticker-track">
+    {% for lead in leads %}
+      <span class="tick">{{ lead.ticker }} {{ lead.company_name or 'UNKNOWN' }} <span class="amt">{{ lead.amount_usd_fmt }}</span> [{{ (lead.funding_round or 'N/A')|upper }}]</span>
+    {% else %}
+      <span class="tick">NO LEADS ON FILE</span>
+    {% endfor %}
+    {# Duplicate the sequence so the marquee loops seamlessly #}
+    {% for lead in leads %}
+      <span class="tick">{{ lead.ticker }} {{ lead.company_name or 'UNKNOWN' }} <span class="amt">{{ lead.amount_usd_fmt }}</span> [{{ (lead.funding_round or 'N/A')|upper }}]</span>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
+
+{% block statbar %}
+<div class="stat-bar">
+  <div class="stat"><span class="stat-label">LEADS</span><span class="stat-value">{{ stats.total_leads }}</span></div>
+  <div class="stat"><span class="stat-label">CAPITAL TRACKED</span><span class="stat-value">{{ stats.total_capital_fmt }}</span></div>
+  <div class="stat"><span class="stat-label">VERIFIED</span><span class="stat-value">{{ stats.verified_count }}/{{ stats.total_leads }}</span></div>
+  <div class="stat"><span class="stat-label">LAST UPDATED</span><span class="stat-value">{{ stats.last_updated }}</span></div>
+</div>
+{% endblock %}
+
 {% block content %}
 <div class="panel">
   <div class="panel-head">&gt; FUNDING LEADS ({{ leads|length }} SHOWN, NEWEST FIRST)</div>
+
   {% if leads %}
-  <table class="leads">
+  <div class="toolbar">
+    <div class="toolbar-group">
+      <label for="sort-select">SORT</label>
+      <select id="sort-select">
+        <option value="date-desc" selected>DATE (NEWEST)</option>
+        <option value="date-asc">DATE (OLDEST)</option>
+        <option value="amount-desc">AMOUNT (HIGH-LOW)</option>
+        <option value="amount-asc">AMOUNT (LOW-HIGH)</option>
+        <option value="round">ROUND</option>
+      </select>
+    </div>
+    <div class="toolbar-group">
+      <label for="sector-select">SECTOR</label>
+      <select id="sector-select">
+        <option value="">ALL</option>
+      </select>
+    </div>
+    <div class="toolbar-group">
+      <label for="verified-only">VERIFIED ONLY</label>
+      <input type="checkbox" id="verified-only">
+    </div>
+    <div class="toolbar-group">
+      <span id="filter-count" class="time-ago"></span>
+    </div>
+  </div>
+
+  <div class="table-scroll">
+  <table class="leads" id="leads-table">
     <thead>
       <tr>
-        <th>DATE</th>
+        <th class="sortable" data-sort-key="date">TIME <span class="arrow">&#9660;</span></th>
+        <th>TICKER</th>
         <th>COMPANY</th>
-        <th>ROUND</th>
-        <th>AMOUNT</th>
+        <th class="sortable" data-sort-key="round">ROUND <span class="arrow">&#9660;</span></th>
+        <th class="sortable" data-sort-key="amount">AMOUNT <span class="arrow">&#9660;</span></th>
+        <th>INV</th>
         <th>SECTOR</th>
         <th>MOVE</th>
-        <th>STATUS</th>
+        <th>ACTIVITY</th>
+        <th>CONF</th>
       </tr>
     </thead>
-    <tbody>
+    <tbody id="leads-tbody">
       {% for lead in leads %}
-      <tr class="lead-row" onclick="window.location='/leads/{{ lead.id }}'">
-        <td>{{ lead.published_at[:10] if lead.published_at else '—' }}</td>
+      <tr class="lead-row"
+          onclick="window.location='/leads/{{ lead.id }}'"
+          data-amount="{{ lead.amount_usd or 0 }}"
+          data-date="{{ lead.published_at or '' }}"
+          data-round="{{ lead.funding_round or 'zzz' }}"
+          data-sector="{{ lead.sector or '' }}"
+          data-verified="{{ '1' if lead.fully_grounded else '0' }}">
+        <td class="time-ago" title="{{ lead.published_at or '' }}">{{ lead.time_ago }}</td>
+        <td class="ticker-code">{{ lead.ticker }}</td>
         <td>{{ lead.company_name or '—' }}</td>
         <td><span class="round-tag">{{ (lead.funding_round or 'N/A')|upper }}</span></td>
         <td class="amount">{{ lead.amount_usd_fmt }}</td>
+        <td class="inv-count">&times;{{ lead.investor_count }}</td>
         <td class="sector">{{ lead.sector or '—' }}</td>
         <td><div class="bar-track"><div class="bar-fill" style="width: {{ lead.bar_pct }}%;"></div></div></td>
+        <td>
+          <div class="activity-cell">
+            {% if lead.activity.kind == 'signal' %}
+              <span class="badge badge-signal">{{ lead.activity.text }}</span>
+              <span class="activity-detail">{{ lead.activity.detail }}</span>
+            {% elif lead.activity.kind == 'cadence' %}
+              <span class="activity-cadence">{{ lead.activity.text }}</span>
+              <span class="activity-detail">{{ lead.activity.detail }}</span>
+            {% else %}
+              <span class="activity-none">—</span>
+            {% endif %}
+          </div>
+        </td>
         <td>
           {% if lead.fully_grounded %}
             <span class="badge badge-verified">VERIFIED</span>
           {% else %}
             <span class="badge badge-unverified">&#9888; UNVERIFIED</span>
           {% endif %}
-          {% if lead.switch_signal %}
-            <span class="badge badge-signal">&#9888; ACTIVITY</span>
-          {% endif %}
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <div class="empty-state">NO LEADS ON FILE<span class="cursor"></span></div>
   {% endif %}
 </div>
+
+<script>
+(function () {
+  var tbody = document.getElementById('leads-tbody');
+  if (!tbody) return;
+  var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.lead-row'));
+
+  // Populate the sector filter from what's actually on the page.
+  var sectorSelect = document.getElementById('sector-select');
+  var sectors = Array.from(new Set(rows.map(function (r) { return r.getAttribute('data-sector'); })
+    .filter(function (s) { return s; }))).sort();
+  sectors.forEach(function (s) {
+    var opt = document.createElement('option');
+    opt.value = s; opt.textContent = s.toUpperCase();
+    sectorSelect.appendChild(opt);
+  });
+
+  var sortSelect = document.getElementById('sort-select');
+  var verifiedOnly = document.getElementById('verified-only');
+  var filterCount = document.getElementById('filter-count');
+  var headers = tbody.parentElement.querySelectorAll('th.sortable');
+
+  function applySort() {
+    var key = sortSelect.value;
+    var sorted = rows.slice();
+    sorted.sort(function (a, b) {
+      switch (key) {
+        case 'date-asc':
+          return a.getAttribute('data-date').localeCompare(b.getAttribute('data-date'));
+        case 'date-desc':
+          return b.getAttribute('data-date').localeCompare(a.getAttribute('data-date'));
+        case 'amount-desc':
+          return parseFloat(b.getAttribute('data-amount')) - parseFloat(a.getAttribute('data-amount'));
+        case 'amount-asc':
+          return parseFloat(a.getAttribute('data-amount')) - parseFloat(b.getAttribute('data-amount'));
+        case 'round':
+          return a.getAttribute('data-round').localeCompare(b.getAttribute('data-round'));
+        default:
+          return 0;
+      }
+    });
+    sorted.forEach(function (row) { tbody.appendChild(row); });
+
+    headers.forEach(function (h) {
+      var sortKey = h.getAttribute('data-sort-key');
+      h.classList.toggle('sort-active', key.indexOf(sortKey) === 0);
+    });
+  }
+
+  function applyFilter() {
+    var sector = sectorSelect.value;
+    var onlyVerified = verifiedOnly.checked;
+    var shown = 0;
+    rows.forEach(function (row) {
+      var matchesSector = !sector || row.getAttribute('data-sector') === sector;
+      var matchesVerified = !onlyVerified || row.getAttribute('data-verified') === '1';
+      var visible = matchesSector && matchesVerified;
+      row.classList.toggle('is-hidden', !visible);
+      if (visible) shown++;
+    });
+    filterCount.textContent = shown + ' / ' + rows.length + ' SHOWN';
+  }
+
+  sortSelect.addEventListener('change', applySort);
+  sectorSelect.addEventListener('change', applyFilter);
+  verifiedOnly.addEventListener('change', applyFilter);
+  headers.forEach(function (h) {
+    h.addEventListener('click', function () {
+      var k = h.getAttribute('data-sort-key');
+      var current = sortSelect.value;
+      if (k === 'date') sortSelect.value = current === 'date-desc' ? 'date-asc' : 'date-desc';
+      else if (k === 'amount') sortSelect.value = current === 'amount-desc' ? 'amount-asc' : 'amount-desc';
+      else if (k === 'round') sortSelect.value = 'round';
+      applySort();
+    });
+  });
+
+  applySort();
+  applyFilter();
+})();
+</script>
 {% endblock %}

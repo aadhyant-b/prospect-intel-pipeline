@@ -9,10 +9,25 @@ from __future__ import annotations
 
 import json
 import math
+import re
+import time
+from datetime import UTC, datetime
 
 from src.db import get_client
+from src.detect.detector import fetch_releases as _fetch_all_releases
+from src.detect.detector import group_releases
 
 LEADS_LIST_LIMIT = 100
+
+# Cadence fallback (see _get_grouped_releases_cached) reuses the switch
+# detector's own fetch+group logic rather than duplicating it, which means a
+# full releases-table paginated fetch (~10k rows today) on a cache miss --
+# fine for a rarely-hit internal dashboard, but cached briefly so repeated
+# page loads in quick succession don't refetch the whole table every time.
+_CADENCE_CACHE_TTL_SECONDS = 60
+_cadence_cache: dict[str, object] = {"data": None, "fetched_at": 0.0}
+
+_TICKER_RE = re.compile(r"[^A-Za-z0-9]")
 
 
 def _parse_jsonb_list(value) -> list:
@@ -48,6 +63,9 @@ def _add_display_fields(lead: dict) -> dict:
     lead["investors"] = _parse_jsonb_list(lead.get("investors"))
     lead["grounding_failures"] = _parse_jsonb_list(lead.get("grounding_failures"))
     lead["amount_usd_fmt"] = _format_amount(lead.get("amount_usd"))
+    lead["investor_count"] = len(lead["investors"])
+    lead["time_ago"] = _format_relative_time(lead.get("published_at"))
+    lead["ticker"] = _synthesize_ticker(lead.get("company_name"), lead.get("id", "----"))
     return lead
 
 
@@ -75,6 +93,83 @@ def _add_bar_metrics(leads: list[dict]) -> None:
         else:
             pct = (math.log10(amount) - lo) / span * 100
             lead["bar_pct"] = max(8, round(pct))  # floor so small raises still show a sliver
+
+
+def _parse_iso(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def _format_relative_time(value: str | None) -> str:
+    if not value:
+        return "—"
+    delta = datetime.now(UTC) - _parse_iso(value)
+    seconds = delta.total_seconds()
+    if seconds < 60:
+        return "just now"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{int(minutes)}m ago"
+    hours = minutes / 60
+    if hours < 24:
+        return f"{int(hours)}h ago"
+    return f"{int(hours / 24)}d ago"
+
+
+def _synthesize_ticker(company_name: str | None, fallback_id: str) -> str:
+    # Decorative, not a real identifier -- collisions are fine.
+    cleaned = _TICKER_RE.sub("", company_name or "").upper()
+    return cleaned[:4] if cleaned else fallback_id[:4].upper()
+
+
+def _get_grouped_releases_cached(client) -> dict[str, list[dict]]:
+    now = time.monotonic()
+    if _cadence_cache["data"] is not None and (now - _cadence_cache["fetched_at"]) < _CADENCE_CACHE_TTL_SECONDS:
+        return _cadence_cache["data"]
+    grouped = group_releases(_fetch_all_releases(client))
+    _cadence_cache["data"] = grouped
+    _cadence_cache["fetched_at"] = now
+    return grouped
+
+
+def _add_activity_field(client, leads: list[dict]) -> None:
+    """Per-row activity indicator. A real switch_predictions entry (rare
+    today) wins and is shown as the prominent pulsing signal; otherwise fall
+    back to a dim, always-present cadence readout ("N releases - last Xd
+    ago") pulled from that company's real release history, so the column
+    isn't usually empty. group_releases() keys by the same
+    company_group_key() funding_leads.company_group_key was written with, so
+    the lookup lines up without any extra normalization here."""
+    grouped = _get_grouped_releases_cached(client)
+    now = datetime.now(UTC)
+
+    for lead in leads:
+        signal = lead.get("switch_signal")
+        if signal:
+            top_reason = signal["reasons"][0] if signal.get("reasons") else f"score {signal['score']:.2f}"
+            lead["activity"] = {"kind": "signal", "text": "⚡ ACTIVITY", "detail": top_reason}
+            continue
+
+        group = grouped.get(lead.get("company_group_key"))
+        if group:
+            last_seen = group[-1]["published_at"]
+            days_since = (now - last_seen).days
+            lead["activity"] = {
+                "kind": "cadence",
+                "text": f"{len(group)} release{'s' if len(group) != 1 else ''}",
+                "detail": f"last {days_since}d ago" if days_since > 0 else "last today",
+            }
+        else:
+            lead["activity"] = {"kind": "none", "text": "—", "detail": ""}
+
+
+def compute_feed_stats(leads: list[dict]) -> dict:
+    total_capital = sum(lead["amount_usd"] for lead in leads if lead.get("amount_usd"))
+    return {
+        "total_leads": len(leads),
+        "total_capital_fmt": _format_amount(total_capital) if total_capital else "$0",
+        "verified_count": sum(1 for lead in leads if lead.get("fully_grounded")),
+        "last_updated": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+    }
 
 
 def _fetch_latest_switch_signals(client, keys: set[str]) -> dict[str, dict]:
@@ -121,6 +216,8 @@ def fetch_leads(limit: int = LEADS_LIST_LIMIT) -> list[dict]:
     for lead in leads:
         lead["switch_signal"] = signals.get(lead.get("company_group_key"))
 
+    _add_activity_field(client, leads)
+
     return leads
 
 
@@ -146,5 +243,7 @@ def fetch_lead_detail(lead_id: str) -> dict | None:
 
     signals = _fetch_latest_switch_signals(client, {lead["company_group_key"]} if lead.get("company_group_key") else set())
     lead["switch_signal"] = signals.get(lead.get("company_group_key"))
+
+    _add_activity_field(client, [lead])
 
     return lead

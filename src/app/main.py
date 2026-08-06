@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from src.app.queries import fetch_lead_detail, fetch_leads
+from src.app.queries import compute_feed_stats, fetch_lead_detail, fetch_leads
 
 app = FastAPI()
 
@@ -27,7 +27,8 @@ def root() -> RedirectResponse:
 @app.get("/leads")
 def leads_list(request: Request):
     leads = fetch_leads()
-    return templates.TemplateResponse(request, "leads_list.html", {"leads": leads})
+    stats = compute_feed_stats(leads)
+    return templates.TemplateResponse(request, "leads_list.html", {"leads": leads, "stats": stats})
 
 
 @app.get("/leads/{lead_id}")
