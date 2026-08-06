@@ -29,6 +29,21 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Render's auto-detected Python buildpack runs `poetry install` whenever it
+# sees a pyproject.toml, regardless of [build-system].build-backend above --
+# Poetry reads the [project] table directly (PEP 621 support, Poetry 1.8+)
+# and, by default, tries to install this project itself as a package named
+# after [project.name]. There's no press_release_intel/ directory to match
+# (the code is multiple independent modules under src/: app, ingest,
+# extract, eval, resolve, detect, db.py -- not one importable package), so
+# that step fails with "No file/folder found for package press-release-intel".
+# package-mode = false tells Poetry to only resolve/install the dependencies
+# above and skip trying to install the project itself -- exactly what's
+# needed here, since nothing ever does `import press_release_intel`; the
+# app is run directly via `uvicorn src.app.main:app`.
+[tool.poetry]
+package-mode = false
+
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
