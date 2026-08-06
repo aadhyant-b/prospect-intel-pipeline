@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ lead.company_name or 'LEAD' }} — FUNDING WIRE TERMINAL{% endblock %}
+{% block content %}
+<a class="back-link" href="/leads">&lt; BACK TO FEED</a>
+<div class="panel">
+  <div class="panel-head">&gt; {{ (lead.company_name or 'UNKNOWN COMPANY')|upper }}</div>
+  <div class="field-row"><div class="label">FUNDING ROUND</div><div class="value"><span class="round-tag">{{ (lead.funding_round or 'N/A')|upper }}</span></div></div>
+  <div class="field-row"><div class="label">AMOUNT</div><div class="value amount">{{ lead.amount_usd_fmt }}</div></div>
+  <div class="field-row"><div class="label">SECTOR</div><div class="value">{{ lead.sector or '—' }}</div></div>
+  <div class="field-row"><div class="label">INVESTORS</div><div class="value">{% if lead.investors %}{{ lead.investors|join(', ') }}{% else %}—{% endif %}</div></div>
+  <div class="field-row"><div class="label">PUBLISHED</div><div class="value">{{ lead.published_at or '—' }}</div></div>
+  <div class="field-row"><div class="label">DISTRIBUTOR</div><div class="value">{{ lead.distributor or '—' }}</div></div>
+  <div class="field-row">
+    <div class="label">SOURCE RELEASE</div>
+    <div class="value">
+      {% if lead.release %}
+        <a href="{{ lead.release.url }}" target="_blank" rel="noopener">{{ lead.release.title }}</a>
+      {% else %}
+        —
+      {% endif %}
+    </div>
+  </div>
+  <div class="field-row">
+    <div class="label">CONFIDENCE</div>
+    <div class="value">
+      {% if lead.fully_grounded %}
+        <span class="badge badge-verified">ALL FIELDS VERIFIED</span>
+      {% else %}
+        <span class="badge badge-unverified">&#9888; UNVERIFIED FIELDS</span>
+        {% if lead.grounding_failures %}
+        <div class="grounding-fail">
+          {% for f in lead.grounding_failures %}&bull; {{ f }}<br>{% endfor %}
+        </div>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if lead.switch_signal %}
+<div class="panel">
+  <div class="panel-head">&gt; &#9888; ACTIVITY SIGNAL (score {{ '%.2f'|format(lead.switch_signal.score) }})</div>
+  <div style="padding: 10px 14px;">
+    {% for reason in lead.switch_signal.reasons %}
+      <div>&bull; {{ reason }}</div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

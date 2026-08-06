@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}LEADS — FUNDING WIRE TERMINAL{% endblock %}
+{% block content %}
+<div class="panel">
+  <div class="panel-head">&gt; FUNDING LEADS ({{ leads|length }} SHOWN, NEWEST FIRST)</div>
+  {% if leads %}
+  <table class="leads">
+    <thead>
+      <tr>
+        <th>DATE</th>
+        <th>COMPANY</th>
+        <th>ROUND</th>
+        <th>AMOUNT</th>
+        <th>SECTOR</th>
+        <th>MOVE</th>
+        <th>STATUS</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lead in leads %}
+      <tr class="lead-row" onclick="window.location='/leads/{{ lead.id }}'">
+        <td>{{ lead.published_at[:10] if lead.published_at else '—' }}</td>
+        <td>{{ lead.company_name or '—' }}</td>
+        <td><span class="round-tag">{{ (lead.funding_round or 'N/A')|upper }}</span></td>
+        <td class="amount">{{ lead.amount_usd_fmt }}</td>
+        <td class="sector">{{ lead.sector or '—' }}</td>
+        <td><div class="bar-track"><div class="bar-fill" style="width: {{ lead.bar_pct }}%;"></div></div></td>
+        <td>
+          {% if lead.fully_grounded %}
+            <span class="badge badge-verified">VERIFIED</span>
+          {% else %}
+            <span class="badge badge-unverified">&#9888; UNVERIFIED</span>
+          {% endif %}
+          {% if lead.switch_signal %}
+            <span class="badge badge-signal">&#9888; ACTIVITY</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">NO LEADS ON FILE<span class="cursor"></span></div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -13,6 +13,7 @@ dependencies = [
     "python-dotenv",
     "anthropic",
     "pydantic",
+    "jinja2",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}FUNDING WIRE TERMINAL{% endblock %}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #04120a;
+    --green: #33ff66;
+    --green-dim: #1a9944;
+    --amber: #ffb000;
+    --amber-dim: #a86e00;
+    --red: #ff3b3b;
+    --border: #0e3a1f;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--green);
+    font-family: 'Courier New', ui-monospace, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  body {
+    min-height: 100vh;
+    position: relative;
+    background-image: radial-gradient(ellipse at top, rgba(51,255,102,0.06), transparent 60%);
+  }
+  /* CRT scanlines + edge vignette -- fixed overlays, purely decorative */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.18) 3px);
+    z-index: 50;
+    mix-blend-mode: multiply;
+  }
+  body::after {
+    content: "";
+    position: fixed; inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 140px rgba(0,0,0,0.85);
+    z-index: 51;
+  }
+  a { color: var(--green); text-decoration: none; }
+  a:hover { color: #aaffcc; text-shadow: 0 0 6px var(--green); }
+  .glow { text-shadow: 0 0 4px currentColor, 0 0 10px currentColor; }
+
+  header.topbar {
+    border-bottom: 1px solid var(--border);
+    padding: 10px 18px;
+    display: flex; justify-content: space-between; align-items: baseline;
+    background: linear-gradient(to bottom, #06210f, #04120a);
+  }
+  header.topbar .brand { font-weight: bold; letter-spacing: 2px; }
+  header.topbar .clock { font-size: 11px; color: var(--green-dim); }
+  .cursor::after { content: "\2588"; animation: blink 1s steps(1) infinite; margin-left: 4px; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  main { padding: 16px 18px 60px; max-width: 1100px; margin: 0 auto; }
+
+  .panel {
+    border: 1px solid var(--border);
+    background: rgba(6, 26, 15, 0.55);
+    box-shadow: 0 0 20px rgba(0,0,0,0.6), inset 0 0 30px rgba(51,255,102,0.02);
+    margin-bottom: 14px;
+  }
+  .panel-head {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--amber);
+    font-size: 11px;
+    letter-spacing: 1px;
+  }
+
+  table.leads { width: 100%; border-collapse: collapse; }
+  table.leads th {
+    text-align: left; font-weight: normal;
+    font-size: 11px; color: var(--green-dim);
+    padding: 6px 10px; border-bottom: 1px solid var(--border);
+    letter-spacing: 1px;
+  }
+  table.leads td { padding: 6px 10px; border-bottom: 1px solid rgba(14,58,31,0.5); vertical-align: middle; white-space: nowrap; }
+  table.leads td.sector { white-space: normal; max-width: 220px; color: var(--green-dim); }
+  table.leads tr.lead-row { cursor: pointer; transition: background 0.15s; }
+  table.leads tr.lead-row:hover { background: rgba(51,255,102,0.07); }
+  table.leads tr.lead-row:hover td { text-shadow: 0 0 4px rgba(51,255,102,0.5); }
+
+  .amount { color: #d8ffe4; font-weight: bold; }
+  .round-tag {
+    display: inline-block; padding: 1px 6px; font-size: 10px;
+    border: 1px solid var(--green-dim); color: var(--green);
+    letter-spacing: 1px;
+  }
+
+  .bar-track { width: 130px; height: 8px; background: #041008; border: 1px solid var(--border); }
+  .bar-fill { height: 100%; background: linear-gradient(to right, var(--green-dim), var(--green)); }
+
+  .badge { display: inline-block; font-size: 10px; padding: 1px 5px; border: 1px solid; letter-spacing: 0.5px; white-space: nowrap; }
+  .badge-verified { color: var(--green); border-color: var(--green-dim); }
+  .badge-unverified { color: var(--amber); border-color: var(--amber-dim); }
+  .badge-signal { color: var(--red); border-color: var(--red); animation: pulse 1.6s ease-in-out infinite; margin-left: 4px; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  footer.statusbar {
+    border-top: 1px solid var(--border);
+    padding: 6px 18px; font-size: 11px; color: var(--green-dim);
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #04120a;
+  }
+
+  .back-link { display: inline-block; margin-bottom: 10px; font-size: 12px; }
+  .field-row { display: flex; padding: 6px 10px; border-bottom: 1px solid rgba(14,58,31,0.4); }
+  .field-row .label { width: 160px; flex-shrink: 0; color: var(--green-dim); }
+  .field-row .value { flex: 1; word-break: break-word; }
+  .grounding-fail { color: var(--amber); font-size: 12px; margin-top: 4px; line-height: 1.6; }
+  .empty-state { padding: 30px; text-align: center; color: var(--green-dim); }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand glow"><a href="/leads">&gt; FUNDING WIRE TERMINAL</a></div>
+  <div class="clock">READ-ONLY <span class="cursor"></span></div>
+</header>
+<main>
+  {% block content %}{% endblock %}
+</main>
+<footer class="statusbar">press-release-intel // funding_leads // grounded extraction</footer>
+</body>
+</html>
