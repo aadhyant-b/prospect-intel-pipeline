@@ -41,10 +41,27 @@ FundingRound = Literal[
 
 SYSTEM_PROMPT = """You extract structured funding data from company press releases.
 
-Determine is_funding_related first: true only if the release announces a company \
-raising funding (equity, debt, grant, or IPO proceeds). Routine business news, \
-earnings reports, product launches, litigation notices, and partnership \
-announcements are NOT funding-related, even if they mention money.
+Determine is_funding_related first: true only if the release's PRIMARY news is a \
+company raising investment capital -- a funding round, a raise, or a financing \
+(equity, debt, grant, or IPO proceeds) that is the actual subject of the release. \
+The test is "what is this release fundamentally about", not "does it mention a \
+dollar figure or a funding round anywhere in the text".
+
+Do NOT mark is_funding_related true for any of the following, even when they cite \
+a dollar amount or reference a funding round in passing:
+- Executive hires, promotions, or departures -- even if the announcement mentions \
+that the company (or the executive's prior company) previously raised funding, or \
+frames the hire as supporting future growth/fundraising. The hire is the news, not \
+the raise.
+- Correction or clarification notices about an earlier release -- these restate or \
+amend facts already announced; they are not a new funding announcement.
+- Fund launches, fund closes, or partnership/alliance announcements where no \
+operating company is raising capital from investors.
+- M&A, acquisitions, or investments a company makes INTO another business -- the \
+subject must be the company itself raising money, not spending, acquiring, or \
+investing elsewhere.
+- Earnings reports, product launches, litigation notices, and other routine \
+business news that happens to cite a dollar amount.
 
 If is_funding_related is true, fill in the other fields from what the release \
 states. If is_funding_related is false, leave company_name, funding_round, and \
