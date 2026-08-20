@@ -2,7 +2,7 @@ name: Daily Leads Extraction
 
 on:
   schedule:
-    - cron: "0 7 * * *"
+    - cron: "0 1,7,13,19 * * *"
   workflow_dispatch:
 
 jobs:
@@ -23,4 +23,4 @@ jobs:
         run: pip install -e .
 
       - name: Run leads ingester
-        run: python -m src.extract.leads_ingester --source "PR Newswire - Venture Capital" --write --limit 30
+        run: python -m src.extract.leads_ingester --source "PR Newswire - Venture Capital" --write --limit 8

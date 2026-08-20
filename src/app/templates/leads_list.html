@@ -203,4 +203,32 @@
   applyFilter();
 })();
 </script>
+
+<script>
+(function () {
+  // Subtle auto-refresh: reload from the server (which re-fetches Supabase)
+  // every few minutes, but only while the tab is actually visible, so we
+  // don't burn requests on backgrounded tabs and the reload never surprises
+  // someone mid-interaction on a hidden page.
+  var REFRESH_MS = 3 * 60 * 1000;
+  var timer = null;
+
+  function scheduleRefresh() {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function () {
+      if (document.visibilityState === 'visible') {
+        window.location.reload();
+      } else {
+        scheduleRefresh();
+      }
+    }, REFRESH_MS);
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') scheduleRefresh();
+  });
+
+  scheduleRefresh();
+})();
+</script>
 {% endblock %}
