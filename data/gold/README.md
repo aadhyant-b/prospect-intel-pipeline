@@ -22,3 +22,5 @@ One JSON object per line:
 ```
 
 Non-funding releases are recorded with `is_funding_related: false` and null/empty fields — these are negative controls, used to check whether an extraction model wrongly pulls funding fields out of unrelated text.
+
+`src/eval/label_gold.py` runs teacher-assisted by default: it shows the grounded Claude extractor's draft and the labeler either accepts the whole draft with one keypress (Enter/`a`) or corrects specific fields (`c`, drops into a per-field prompt) before anything is saved — the human's confirmation is what makes the record ground truth, not the draft. `labeler_notes` records `"teacher-assisted: accepted"` or `"teacher-assisted: corrected <fields>"` for provenance; pass `--no-teacher` to fall back to blank manual entry, which leaves `labeler_notes` as `null`.
