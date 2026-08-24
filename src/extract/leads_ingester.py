@@ -2,11 +2,17 @@
 writes real rows into `extractions` and `funding_leads`.
 
 Pulls funding-related-candidate releases (default source: the PR Newswire
-Venture Capital feed) that haven't been processed yet, runs the grounded
-extractor (src/extract/extractor.py, Stage 1), logs every attempt to
-`extractions` (funding-related or not -- this is what makes reruns
-idempotent, see _fetch_candidate_releases), and writes a `funding_leads` row
-for each one that is funding-related and has a grounded company name.
+Venture Capital feed -- the only feed this ever runs against, since it's
+already funding-dense; general wire feeds are noise-dominated and not
+worth AI spend here) that haven't been processed yet, RANKS them with a
+free (no-API) title-keyword + recency score (see _title_score /
+_fetch_candidate_releases), and only sends the top `limit` to the grounded
+extractor (src/extract/extractor.py, Stage 1) -- ranking happens before
+any AI spend, so cost stays proportional to `limit`, not to backlog size.
+Every attempt is logged to `extractions` (funding-related or not -- this
+is what makes reruns idempotent, see _fetch_processed_release_ids), and a
+`funding_leads` row is written for each one that is funding-related and
+has a grounded company name.
 
 Read-only by default -- pass --write to actually insert. Matches the
 convention already established by src/detect/detector.py and
@@ -19,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 
 import anthropic
 from dotenv import load_dotenv
@@ -32,6 +39,31 @@ load_dotenv()
 DEFAULT_SOURCE = "PR Newswire - Venture Capital"
 DEFAULT_LIMIT = 20
 _FETCH_PAGE_SIZE = 1000
+
+# Free (no-API) title signals used to rank candidates before any AI spend.
+# Phrase hits are the base score; an explicit dollar amount is a strong
+# extra signal since it correlates with an actual disclosed raise rather
+# than a vague funding-adjacent mention.
+_TITLE_KEYWORDS = [
+    "raises", "raised", "raising",
+    "secures", "closes",
+    "series a", "series b", "series c",
+    "seed round", "seed funding", "seed extension", "pre-seed",
+    "funding round", "closes funding", "closes financing",
+    "secures funding", "secures investment", "secures financing",
+    "investment from", "venture round", "growth equity", "term loan",
+]
+_AMOUNT_RE = re.compile(r"\$\s?\d[\d,.]*\s?(million|billion|m|mm|bn|b)\b", re.IGNORECASE)
+
+
+def _title_score(title: str) -> int:
+    """Free relevance score from the title alone -- no API call. Funding
+    phrase hits, plus +2 for an explicit dollar amount."""
+    t = (title or "").lower()
+    score = sum(1 for kw in _TITLE_KEYWORDS if kw in t)
+    if _AMOUNT_RE.search(t):
+        score += 2
+    return score
 
 
 def _fetch_processed_release_ids(client) -> set[str]:
@@ -58,30 +90,47 @@ def _fetch_processed_release_ids(client) -> set[str]:
 
 
 def _fetch_candidate_releases(client, source: str, limit: int) -> list[dict]:
+    """Every not-yet-processed release for `source`, ranked by the free
+    title/recency score and sliced to the top `limit`. Two passes so AI-free
+    ranking runs over cheap metadata (id/title/published_at) even when the
+    backlog is large, and raw_text (the only large field) is fetched only
+    for the exact rows that will actually be sent to the extractor."""
     processed_ids = _fetch_processed_release_ids(client)
-    rows: list[dict] = []
+
+    meta: list[dict] = []
     offset = 0
-    while len(rows) < limit:
+    while True:
         batch = (
             client.table("releases")
-            .select("id,title,raw_text,distributor,published_at")
+            .select("id,title,published_at")
             .eq("distributor", source)
-            .order("published_at", desc=True)
             .range(offset, offset + _FETCH_PAGE_SIZE - 1)
             .execute()
             .data
         )
         if not batch:
             break
-        for row in batch:
-            if row["id"] not in processed_ids:
-                rows.append(row)
-                if len(rows) >= limit:
-                    break
+        meta.extend(row for row in batch if row["id"] not in processed_ids)
         offset += _FETCH_PAGE_SIZE
         if len(batch) < _FETCH_PAGE_SIZE:
             break
-    return rows
+
+    # Highest title score first; ties broken by recency (ISO published_at
+    # sorts correctly as a string). Free signals only -- no AI spend yet.
+    meta.sort(key=lambda r: (_title_score(r["title"]), r["published_at"] or ""), reverse=True)
+    top_ids = [row["id"] for row in meta[:limit]]
+    if not top_ids:
+        return []
+
+    full = (
+        client.table("releases")
+        .select("id,title,raw_text,distributor,published_at")
+        .in_("id", top_ids)
+        .execute()
+        .data
+    )
+    by_id = {row["id"]: row for row in full}
+    return [by_id[i] for i in top_ids if i in by_id]
 
 
 def run(source: str, limit: int, write: bool) -> None:
@@ -89,7 +138,8 @@ def run(source: str, limit: int, write: bool) -> None:
     anthropic_client = anthropic.Anthropic()
     rows = _fetch_candidate_releases(client, source, limit)
 
-    print(f"Found {len(rows)} unprocessed release(s) for source={source!r} (limit={limit})\n")
+    print(f"Found {len(rows)} unprocessed release(s) for source={source!r}, "
+          f"ranked by free title/recency score (limit={limit})\n")
 
     total_cost = 0.0
     n_leads = 0
