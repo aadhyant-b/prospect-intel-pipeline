@@ -9,6 +9,7 @@ class _FakeQuery:
         self._table_name = table_name
         self._recorder = recorder
         self._eq_filters = {}
+        self._in_filters = {}
         self._range = None
         self._insert_payload = None
         self._upsert_payload = None
@@ -19,6 +20,10 @@ class _FakeQuery:
 
     def eq(self, col, val):
         self._eq_filters[col] = val
+        return self
+
+    def in_(self, col, values):
+        self._in_filters[col] = set(values)
         return self
 
     def order(self, *_a, **_k):
@@ -50,6 +55,8 @@ class _FakeQuery:
         data = self._recorder.select_data.get(self._table_name, [])
         for col, val in self._eq_filters.items():
             data = [r for r in data if r.get(col) == val]
+        for col, vals in self._in_filters.items():
+            data = [r for r in data if r.get(col) in vals]
         if self._range:
             start, end = self._range
             data = data[start : end + 1]
@@ -92,19 +99,37 @@ def test_fetch_processed_release_ids_paginates(monkeypatch):
 
 def test_fetch_candidate_releases_skips_already_processed_and_respects_limit(monkeypatch):
     monkeypatch.setattr(leads_ingester, "_FETCH_PAGE_SIZE", 10)
+    source = "PR Newswire - Venture Capital"
+    # Known _title_score values (verified against _TITLE_KEYWORDS / _AMOUNT_RE):
+    #   r_amt:      "raises" (1) + explicit $ amount (+2) = 3
+    #   r_tie_new:  "closes" (1), published_at 2026-01-08
+    #   r_tie_old:  "closes" (1), published_at 2026-01-02  (same score as r_tie_new, older -> ranks after)
+    #   r_zero:     no keyword hits = 0
+    #   r_processed: already in extractions -- must be excluded regardless of score
     releases = [
-        {"id": "r1", "title": "t1", "raw_text": "x", "distributor": "PR Newswire - Venture Capital", "published_at": "2026-01-01"},
-        {"id": "r2", "title": "t2", "raw_text": "x", "distributor": "PR Newswire - Venture Capital", "published_at": "2026-01-02"},
-        {"id": "r3", "title": "t3", "raw_text": "x", "distributor": "PR Newswire - Venture Capital", "published_at": "2026-01-03"},
+        {"id": "r_zero", "title": "Foo announces new office", "raw_text": "x", "distributor": source, "published_at": "2026-01-10"},
+        {"id": "r_amt", "title": "Foo raises $5 million in new round", "raw_text": "x", "distributor": source, "published_at": "2026-01-01"},
+        {"id": "r_tie_old", "title": "Foo closes acquisition deal", "raw_text": "x", "distributor": source, "published_at": "2026-01-02"},
+        {"id": "r_tie_new", "title": "Bar closes acquisition deal", "raw_text": "x", "distributor": source, "published_at": "2026-01-08"},
+        {"id": "r_processed", "title": "Baz raises $50 million", "raw_text": "x", "distributor": source, "published_at": "2026-01-09"},
     ]
     client = FakeClient({
-        "extractions": [{"release_id": "r1"}],  # r1 already processed
+        "extractions": [{"release_id": "r_processed"}],
         "releases": releases,
     })
 
-    candidates = leads_ingester._fetch_candidate_releases(client, "PR Newswire - Venture Capital", limit=10)
+    # Sanity-check the assumed scores so the test fails loudly (not silently)
+    # if _title_score's keyword list or amount regex ever changes.
+    assert leads_ingester._title_score("Foo raises $5 million in new round") == 3
+    assert leads_ingester._title_score("Foo closes acquisition deal") == 1
+    assert leads_ingester._title_score("Bar closes acquisition deal") == 1
+    assert leads_ingester._title_score("Foo announces new office") == 0
 
-    assert [r["id"] for r in candidates] == ["r2", "r3"]
+    candidates = leads_ingester._fetch_candidate_releases(client, source, limit=3)
+
+    # Ranked by score desc, ties broken by published_at desc (more recent first);
+    # r_processed is excluded despite its high score, r_zero excluded by the limit.
+    assert [r["id"] for r in candidates] == ["r_amt", "r_tie_new", "r_tie_old"]
 
 
 def test_run_dry_run_writes_nothing(monkeypatch):
