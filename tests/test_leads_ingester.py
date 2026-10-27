@@ -161,12 +161,17 @@ def test_run_write_inserts_extraction_and_lead(monkeypatch):
 
     assert len(client.upserts["funding_leads"]) == 1
     lead_payload, on_conflict = client.upserts["funding_leads"][0]
-    assert on_conflict == "release_id"
+    assert on_conflict == "dedupe_key"
     assert lead_payload["release_id"] == "r1"
     assert lead_payload["company_group_key"] == "acme"
     assert lead_payload["company_name"] == "Acme Corp"
     assert lead_payload["fully_grounded"] is True
     assert lead_payload["extraction_id"] == "ext-1"
+    # NOT NULL in the live schema -- omitting it fails every write with 23502.
+    assert lead_payload["dedupe_key"] == leads_ingester.dedupe_key(
+        "acme", "series-a", 10_000_000.0, "2026-01-01T00:00:00Z"
+    )
+    assert len(lead_payload["dedupe_key"]) == 32
 
 
 def test_run_not_funding_related_only_logs_extraction(monkeypatch):
@@ -203,3 +208,45 @@ def test_run_skips_lead_when_company_name_ungrounded(monkeypatch):
 
     assert len(client.inserts["extractions"]) == 1
     assert "funding_leads" not in client.upserts
+
+
+# --- dedupe_key ------------------------------------------------------------
+
+def test_dedupe_key_matches_translated_rerelease_across_utc_day():
+    # English release at $152M, translated re-release hours later on the next
+    # UTC day with the amount converted back from EUR (~$151.8M) -- one round.
+    english = leads_ingester.dedupe_key("vaderis", "series-b", 152_000_000.0, "2026-08-11T22:00:00+00:00")
+    translated = leads_ingester.dedupe_key("vaderis", "series-b", 151_800_000.0, "2026-08-12T06:30:00Z")
+    assert english == translated
+
+
+def test_dedupe_key_keeps_nearby_but_distinct_amounts_apart():
+    # 3 sig figs: $152M and $148M are plausibly different raises.
+    assert leads_ingester.dedupe_key("acme", "series-b", 152_000_000.0, "2026-08-11T00:00:00Z") != \
+        leads_ingester.dedupe_key("acme", "series-b", 148_000_000.0, "2026-08-11T00:00:00Z")
+
+
+def test_dedupe_key_differs_by_company_and_round():
+    base = leads_ingester.dedupe_key("acme", "series-a", 10_000_000.0, "2026-01-01T00:00:00Z")
+    assert base != leads_ingester.dedupe_key("beta", "series-a", 10_000_000.0, "2026-01-01T00:00:00Z")
+    assert base != leads_ingester.dedupe_key("acme", "series-b", 10_000_000.0, "2026-01-01T00:00:00Z")
+
+
+def test_dedupe_key_ignores_date_for_strong_rounds():
+    assert leads_ingester.dedupe_key("acme", "series-a", 10_000_000.0, "2026-01-01T00:00:00Z") == \
+        leads_ingester.dedupe_key("acme", "series-a", 10_000_000.0, "2026-03-15T00:00:00Z")
+
+
+def test_dedupe_key_buckets_weak_rounds_by_utc_month():
+    # No specific round and no amount: only the announcement month tells two
+    # undisclosed raises by the same company apart.
+    jan = leads_ingester.dedupe_key("acme", "other", None, "2026-01-05T00:00:00Z")
+    assert jan == leads_ingester.dedupe_key("acme", "other", None, "2026-01-28T12:00:00+00:00")
+    assert jan != leads_ingester.dedupe_key("acme", "other", None, "2026-02-02T00:00:00Z")
+    # Month is UTC: 2026-01-31 23:00 in UTC-5 is February in UTC.
+    assert jan != leads_ingester.dedupe_key("acme", "other", None, "2026-01-31T23:00:00-05:00")
+
+
+def test_dedupe_key_weak_round_with_amount_ignores_date():
+    assert leads_ingester.dedupe_key("acme", "other", 5_000_000.0, "2026-01-05T00:00:00Z") == \
+        leads_ingester.dedupe_key("acme", "other", 5_000_000.0, "2026-04-05T00:00:00Z")

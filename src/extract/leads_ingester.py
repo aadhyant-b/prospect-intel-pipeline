@@ -24,8 +24,10 @@ Run via `python -m src.extract.leads_ingester [--source ...] [--limit N] [--writ
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+from datetime import UTC, datetime
 
 import anthropic
 from dotenv import load_dotenv
@@ -54,6 +56,53 @@ _TITLE_KEYWORDS = [
     "investment from", "venture round", "growth equity", "term loan",
 ]
 _AMOUNT_RE = re.compile(r"\$\s?\d[\d,.]*\s?(million|billion|m|mm|bn|b)\b", re.IGNORECASE)
+
+
+# Bumped whenever the dedupe_key inputs change, so keys from different
+# schemes can never collide silently. (Pre-v2 rows carry 32-hex keys whose
+# original inputs couldn't be recovered from git or reproduced -- they need
+# a one-off recompute with dedupe_key() before they dedupe against new rows.)
+_DEDUPE_KEY_VERSION = "v2"
+# A round this weakly identified (no specific round, no amount) is only
+# distinguishable from a later raise by the same company by when it was
+# announced, so its key is additionally bucketed by UTC month.
+_WEAK_ROUNDS = {None, "other"}
+
+
+def _amount_bucket(amount_usd: float | None) -> str:
+    """amount_usd to 3 significant figures ("1.52e+08"), or "none". 3 sig figs
+    absorbs currency-conversion drift between language versions of one
+    announcement (EUR 140M ~= $151.8M -> 1.52e+08, same as $152M) without
+    merging genuinely different raises like $152M and $148M."""
+    if amount_usd is None:
+        return "none"
+    return f"{float(amount_usd):.2e}"
+
+
+def dedupe_key(
+    company_group_key: str,
+    funding_round: str | None,
+    amount_usd: float | None,
+    published_at: str,
+) -> str:
+    """Stable identity for one funding round, independent of which wire
+    release (or which language version of it) reported it: md5 of version |
+    company_group_key | funding_round | 3-sig-fig amount bucket, plus the UTC
+    publish month only when the round is weak (round other/null AND no
+    amount). published_at is otherwise deliberately excluded -- translated
+    re-releases routinely land hours later, often across a UTC day boundary."""
+    parts = [
+        _DEDUPE_KEY_VERSION,
+        company_group_key,
+        funding_round or "unknown",
+        _amount_bucket(amount_usd),
+    ]
+    if funding_round in _WEAK_ROUNDS and amount_usd is None:
+        published = datetime.fromisoformat(published_at)
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=UTC)
+        parts.append(published.astimezone(UTC).strftime("%Y-%m"))
+    return hashlib.md5("|".join(parts).encode()).hexdigest()
 
 
 def _title_score(title: str) -> int:
@@ -198,8 +247,19 @@ def run(source: str, limit: int, write: bool) -> None:
                     "grounding_failures": json.dumps(grounded.grounding_failures),
                     "fully_grounded": not grounded.grounding_failures,
                     "model_version": DEFAULT_MODEL,
+                    "dedupe_key": dedupe_key(
+                        group_key,
+                        grounded.funding_round,
+                        grounded.amount_usd,
+                        row["published_at"],
+                    ),
                 },
-                on_conflict="release_id",
+                # dedupe_key (see dedupe_key() above) catches the same round
+                # reported via a different release_id/url -- including a
+                # translated re-release -- which release_id's own UNIQUE
+                # constraint can't, and updates that existing lead instead
+                # of inserting a duplicate.
+                on_conflict="dedupe_key",
             ).execute()
 
     print(
